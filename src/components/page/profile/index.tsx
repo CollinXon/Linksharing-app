@@ -1,0 +1,308 @@
+'use client';
+import React, { useRef, useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import Image from 'next/image';
+import { useForm } from 'react-hook-form';
+import MainLayout from '../mainlayout';
+import upload from '../../../../public/assets/upload.svg';
+import change from '../../../../public/assets/change.svg';
+import { db, auth, storage } from '@/app/firebase/config';
+import {
+  doc,
+  setDoc,
+  getDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { useAuthState } from 'react-firebase-hooks/auth';
+import { toast, Toaster } from 'react-hot-toast';
+import Link from 'next/link';
+
+// Updated UserLink type to match the expected format
+interface UserLink {
+  id: string;
+  platform: string;
+  url: string;
+}
+
+interface FormData {
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+const DesktopPage: React.FC = () => {
+  const [user, loading, error] = useAuthState(auth);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+    setValue,
+  } = useForm<FormData>();
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [profilePicture, setProfilePicture] = useState<string | null>(null);
+  const [firstName, setFirstName] = useState<string>('');
+  const [lastName, setLastName] = useState<string>('');
+  const [email, setEmail] = useState<string>('');
+  const [links, setLinks] = useState<UserLink[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (user) {
+      const fetchProfile = async () => {
+        const docRef = doc(db, 'profiles', user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const profileData = docSnap.data() as FormData & {
+            imageUrl?: string;
+          };
+          setValue('firstName', profileData.firstName);
+          setValue('lastName', profileData.lastName);
+          setValue('email', profileData.email);
+          setProfilePicture(profileData.imageUrl || null);
+          setFirstName(profileData.firstName || '');
+          setLastName(profileData.lastName || '');
+          setEmail(profileData.email || '');
+        }
+      };
+
+      const fetchLinks = async () => {
+        const linksRef = collection(db, 'links');
+        const q = query(linksRef, where('userId', '==', user.uid));
+        const querySnapshot = await getDocs(q);
+        const userLinks: UserLink[] = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          userLinks.push({ id: doc.id, ...data } as UserLink);
+        });
+        setLinks(userLinks);
+      };
+
+      fetchProfile();
+      fetchLinks();
+    }
+  }, [user, setValue]);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/login');
+    }
+  }, [user, loading, router]);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      const file = event.target.files[0];
+      setSelectedFile(file);
+      const reader = new FileReader();
+      reader.onload = () => {
+        setProfilePicture(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUploadClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const onSubmit = async (data: FormData) => {
+    if (user) {
+      try {
+        let imageUrl: string | null = profilePicture;
+
+        if (selectedFile) {
+          const imageRef = ref(storage, `profile_images/${user.uid}`);
+          await uploadBytes(imageRef, selectedFile);
+          imageUrl = await getDownloadURL(imageRef);
+        }
+
+        await setDoc(doc(db, 'profiles', user.uid), {
+          firstName: data.firstName,
+          lastName: data.lastName,
+          email: data.email,
+          imageUrl,
+        });
+
+        setFirstName(data.firstName);
+        setLastName(data.lastName);
+        setEmail(data.email);
+        setProfilePicture(imageUrl);
+
+        toast.success('Profile updated successfully!');
+      } catch (error) {
+        console.error('Error updating profile:', error);
+        toast.error('Failed to update profile.');
+      }
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-20 w-20 border-t-4 border-b-2 border-[#633CFF]"></div>
+      </div>
+    );
+  }
+
+  if (error || !user) {
+    return (
+      <div className="text-center flex flex-col items-center justify-center min-h-screen">
+        <div className="animate-spin flex justify-center items-center rounded-full h-20 w-20 border-t-4 border-b-2 border-[#b32828]"></div>
+
+        <p className="text-gray-700 mt-4">Please log in to continue.</p>
+
+        <Link href="/login" legacyBehavior>
+          <a className="text-[#b32828] underline mt-2 font-medium">
+            Go to Login Page
+          </a>
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="lg:flex bg-primary">
+      <MainLayout
+        profilePicture={profilePicture || undefined}
+        firstName={firstName}
+        lastName={lastName}
+        email={email}
+        links={links}
+      />
+      <div className="max-w-4xl my-[2rem] bg-white shadow-md rounded-lg p-8">
+        <h1 className="text-black sm:text-[32px] text-2xl font-bold">
+          Profile Details
+        </h1>
+        <h2 className="text-dark-gray text-base mt-2">
+          Add your details to create a personal touch to your profile
+        </h2>
+        <div className="flex sm:flex-row flex-col border mt-[2rem] rounded-md border-primary bg-primary py-[2rem] px-[1rem] sm:gap-[5rem] gap-[2rem] sm:items-center items-start justify-between">
+          <h3 className="text-base text-dark-gray">Profile picture</h3>
+          <div className="flex sm:flex-row flex-col sm:items-center items-start gap-10">
+            <div
+              className="border border-purple bg-purple sm:py-[1rem] py-[3rem] sm:px-[2rem] px-[1.5rem] rounded-md flex flex-col items-center cursor-pointer"
+              onClick={handleUploadClick}
+              style={{
+                backgroundImage:
+                  profilePicture || selectedFile
+                    ? `url(${profilePicture || selectedFile})`
+                    : '',
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+              }}
+            >
+              <Image
+                src={profilePicture || selectedFile ? change : upload}
+                alt={profilePicture || selectedFile ? 'change' : 'upload'}
+                className="mb-2"
+              />
+              <h4
+                className={`font-semibold ${profilePicture || selectedFile ? 'text-white' : 'text-secondary'}`}
+              >
+                {profilePicture || selectedFile
+                  ? 'Change Image'
+                  : '+ Upload Image'}
+              </h4>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                accept="image/png, image/jpeg"
+              />
+            </div>
+            <h5 className="text-xs text-dark-gray">
+              Image must be below 1024x1024px.
+              <br className="sm:block hidden" />
+              Use PNG <br className="sm:hidden block" /> or JPG format.
+            </h5>
+          </div>
+        </div>
+        {selectedFile && (
+          <div className="mt-4 text-dark-gray">
+            <p>Selected file: {selectedFile.name}</p>
+          </div>
+        )}
+        <form onSubmit={handleSubmit(onSubmit)} className="">
+          <div className="border mt-[2rem] rounded-md border-primary py-[2rem] px-[1rem] flex flex-col gap-[.5rem] bg-primary items-center">
+            <div className="sm:flex gap-[rem] w-full relative">
+              <label
+                htmlFor="firstName"
+                className="w-full text-dark-gray sm:text-base text-xs"
+              >
+                First name*
+              </label>
+              <input
+                type="text"
+                placeholder="e.g John"
+                {...register('firstName', { required: "Can't be empty" })}
+                className="w-full rounded-md py-2 border px-[.7rem] border-light-gray text-base outline-none font-normal text-black"
+              />
+              {errors.firstName && (
+                <span className="text-red-500 absolute top-3 px-4 right-0 text-red text-xs">
+                  {errors.firstName.message}
+                </span>
+              )}
+            </div>
+            <div className="sm:flex gap-[rem] w-full relative">
+              <label
+                htmlFor="lastName"
+                className="w-full text-dark-gray sm:text-base text-xs"
+              >
+                Last name*
+              </label>
+              <input
+                type="text"
+                placeholder="e.g Appleseed"
+                {...register('lastName', { required: "Can't be empty" })}
+                className="w-full rounded-md py-2 border px-[.7rem] border-light-gray text-base outline-none text-black"
+              />
+              {errors.lastName && (
+                <span className="text-red absolute top-3 right-0 px-4 text-xs">
+                  {errors.lastName.message}
+                </span>
+              )}
+            </div>
+            <div className="sm:flex gap-[rem] w-full">
+              <label
+                htmlFor="email"
+                className="w-full text-dark-gray sm:text-base text-xs"
+              >
+                Email
+              </label>
+              <input
+                type="text"
+                placeholder="e.g email@example.com"
+                {...register('email', {
+                  pattern: {
+                    value: /^\S+@\S+$/i,
+                    message: 'Invalid email address',
+                  },
+                })}
+                className="w-full rounded-md py-2 border px-[.7rem] border-light-gray text-base outline-none text-black"
+              />
+              {errors.email && (
+                <span className="text-red-500">{errors.email.message}</span>
+              )}
+            </div>
+          </div>
+          <button
+            type="submit"
+            className="text-right border py-2 px-7 mt-[5rem] border-t rounded-md text-white bg-secondary"
+          >
+            Save
+          </button>
+        </form>
+        <Toaster position="top-right" reverseOrder={false} />
+      </div>
+    </div>
+  );
+};
+
+export default DesktopPage;
